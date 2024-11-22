@@ -1,5 +1,5 @@
-from datetime import datetime
 import json
+from embedding_util import generate_embeddings
 import weaviate
 from weaviate.embedded import EmbeddedOptions
 from weaviate.classes.config import Property, DataType
@@ -32,9 +32,17 @@ def add_data(client):
     for json_file in json_files:
         with open(json_file, 'r') as f:
             print("Adding data from", json_file)
+            counter = 0
             with collection.batch.dynamic() as batch:
                 for line in f:
                     package = json.loads(line)
+                    counter += 1
+                    if counter > 100:
+                        break
+
+                    # prepare the object for embedding
+                    vector_str = f"{package['name']} {package['description']}"
+                    vector = generate_embeddings(vector_str)
 
                     # now add the status column
                     if 'archived' in json_file:
@@ -46,29 +54,12 @@ def add_data(client):
                     else:
                         package['status'] = 'unknown'
 
-                    batch.add_object(properties=package)
-
-
-def perform_backup(client):
-    backup_name = "backup-"+datetime.now().strftime("%Y%m%d-%H%M%S")
-    result = client.backup.create(
-        backup_id=backup_name,
-        backend="filesystem",
-        include_collections=["Package"],
-        exclude_collections=None,
-        wait_for_completion=True,
-    )
-    print("result is")
-    print(result)
+                    batch.add_object(properties=package, vector=vector)
 
 
 def test_weaviate():
     client = weaviate.WeaviateClient(
         embedded_options=EmbeddedOptions(
-            additional_env_vars={
-                "ENABLE_MODULES": "backup-filesystem",
-                "BACKUP_FILESYSTEM_PATH": "/tmp/backups"
-            },
             persistence_data_path="./weaviate_data"
         ),
     )
@@ -78,11 +69,6 @@ def test_weaviate():
 
         setup_schema(client)
         add_data(client)
-        try:
-            perform_backup(client)
-        except Exception as e:
-            print("Error during backup")
-            print(e)
 
 
 if __name__ == '__main__':
